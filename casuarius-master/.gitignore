@@ -1,0 +1,5 @@
+MANIFEST
+casuarius.egg-info/
+*.o
+build/
+dist/
