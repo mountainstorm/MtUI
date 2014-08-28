@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # coding: utf-8
 
-# Copyright (c) 2013 Mountainstorm
+# Copyright (c) 2014 Mountainstorm
 # 
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -24,242 +24,225 @@
 
 from Responder import *
 from Event import *
-import urwid
+import pyglet
+from copy import copy
 import time
 import threading
 
 
+_application_instance = None
+
+
+class ApplicationEventLoop(threading.Thread):
+    def __init__(self):
+        threading.Thread.__init__(self)
+        self._quit = False
+        self._event_queue = []
+        self._process_events = threading.Event()
+        self._awaiting_events =  threading.Event()
+        self.start()
+
+    def run(self):
+        while self._quit == False:
+            self._process_events.wait()
+            if self._quit == False:
+                while self._quit == False and len(self._event_queue) > 0:
+                    event = self._event_queue.pop()
+                    Application.shared_application().send_event(event)
+                self._awaiting_events.set()
+
+    def join(self, timeout=None):
+        self._quit = True
+        self._process_events.set()
+        threading.Thread.join(self)
+
+    def dispatch_events(self):
+        self._process_events.set()
+        self._awaiting_events.wait() 
+
+    def post_event(self, event, at_start=False):
+        idx = len(self._event_queue)
+        if at_start == True:
+            idx = 0
+        self._event_queue.insert(idx, event)
+
+    def next_event_matching(self, mask, until, dequeue):
+        retval = None
+        while self._quit == False and retval is None and time.time() < until:
+            # check all events currently in the queue
+            for i in range(0, len(self._event_queue)):
+                Application.shared_application().update_windows()
+                found = True
+                if mask is not None:
+                    found = False
+                    for m in mask:
+                        if isinstance(self._event_queue[i], m):
+                            found = True
+                            break
+                if found == True:
+                    retval = self._event_queue[i]
+                    if dequeue == True:
+                        self._event_queue.pop(i)
+                    break
+            if retval is None:
+                # nothing - so wait until more events arrive
+                self._awaiting_events.set()
+                self._process_events.wait()
+        return retval
+
+    def discard_events_matching(self, mask, end_event):
+        j = 0
+        for i in range(0, len(self._event_queue)):
+            if self._event_queue[j] == end_event:
+                break
+            remove = True
+            if mask is not None:
+                remove = False
+                for m in mask:
+                    if isinstance(self._event_queue[j], m):
+                        remove = True
+                        break
+            if remove == True:
+                self._event_queue.pop(j)
+            else:
+                j += 1      
+
+
+class PygletEventLoop(pyglet.app.EventLoop):
+    def __init__(self, eventloop):
+        pyglet.app.EventLoop.__init__(self)
+        self._eventloop = eventloop
+        
+    def idle(self):
+        # we're going to let the 'runloop' thread run and process events from the 
+        # application queue.  It will either complete send'ing all of them, or 
+        # be caught up in something modal.  Either way we'll be signaled very quickly 
+        # and can then go on.
+        self._eventloop.dispatch_events()
+        Application.shared_application().update_windows()
+        return pyglet.app.EventLoop.idle(self)
+
+
 class Application(Responder):
-	def __init__(self):
-		Responder.__init__(self)
-		self._dispatch = ApplicationEventDispatch(self)
-		self._keyWindow = None
-		self._windows = []
-		self._windowMenu = None
+    def __init__(self):
+        global _application_instance
+        Responder.__init__(self)
+        if _application_instance is not None:
+            raise ValueError(u'Application instance already exits')
+        _application_instance = self # set the application instance
+        self._key_window = None
+        self._windows = []
+        self._main_menu = None
+        self._event_queue = []
+        self._eventloop = ApplicationEventLoop()
+        self._mouse_view = None
+        self._pyglet = PygletEventLoop(self._eventloop)
+        pyglet.app.event_loop = self._pyglet
 
-	# Managing Menus
-	def windowMenu(self):
-		return self._windowMenu
+    def __del__(self):
+        print "del"
+        self._eventloop.join()
 
-	def setWindowMenu(self, menu):
-		self._windowMenu = menu
+    # Getting the Application
+    @classmethod
+    def shared_application(self):
+        global _application_instance
+        return _application_instance
 
-	# Managing Windows
-	def keyWindow(self):
-		return self._keyWindow
+    # XXX: icon?
 
-	def windows(self):
-		return copy(self._windows)
+    # Terminating Applications
+    def terminate(self):
+        self.application_will_terminate()
+        self.stop() # XXX: rework to support application_should_terminate
 
-	def addWindow(self, window):
-		self.insertWindowAtIndex(window, len(self._windows))
+    # Managing the Event Loop
+    def run(self):
+        pyglet.app.run()
 
-	def bringWindowToFront(self, window):
-		try:
-			self._windows.remove(window)
-			self._windows.append(window)
-		except ValueError:
-			raise ValueError(u'window not in windows')
+    def stop(self):
+        self._eventloop.join()
+        pyglet.app.exit()
 
-	def sendWindowToBack(self, window):
-		try:
-			self._windows.remove(window)
-			self._windows.insert(0, window)
-		except ValueError:
-			raise ValueError(u'window not in windows')
+    def send_event(self, event):
+        if isinstance(event, KeyEvent):
+            if self.key_window() is not None:
+                self.key_window().send_event(event)
+        else:
+            event.dispatch_event(event.view)
 
-	def insertWindowAtIndex(self, window, idx):
-		if window is None:
-			raise ValueError(u'Adding a None window')
+    # Handling events
+    def next_event_matching(self, mask, until=0xffffffffffffffff, dequeue=True):
+        return self._eventloop.next_event_matching(mask, until, dequeue)
 
-		if idx < 0 or idx > len(self.windows):
-			raise ValueError(u'Index must be between 0 and len(windows)')
+    def discard_events_matching(self, mask, end_event):
+        self._eventloop.discard_events_matching(mask, end_event)
 
-		window.removeFromApplication()
-		window.willMoveToApplication(self)
+    # Posting events
+    def post_event(self, event, at_start=False):
+        if isinstance(event, MouseEvent):
+            if event.view is not self._mouse_view:
+                # we've moved to a another view - inject leave/enter
+                if self._mouse_view is not None:
+                    self._eventloop.post_event(MouseLeaveEvent(self._mouse_view, event.timestamp))
+                self._mouse_view = event.view
+                if self._mouse_view is not None:
+                    self._eventloop.post_event(MouseEnterEvent(event.view, event.timestamp))
+        if self._mouse_view is not None:
+            self._eventloop.post_event(event, at_start)
 
-		self._windows.insert(idx, window)
-		window._application = self
-		window.setNeedsDisplay()
+    # Managing Windows
+    def key_window(self):
+        return self._key_window
 
-		window.didMoveToApplication()
-		self.didAddWindow(window)
+    def windows(self):
+        return copy(self._windows)
+        
+    # Update Windows
+    def update_windows(self):
+        for win in self._windows:
+            win.update()
 
-	def insertWindowAboveWindow(self, window, otherWindow):
-		if otherWindow is None:
-			raise ValueError(u'otherWindow is None')
+    # Accessing the Main Menu
+    def main_menu(self):
+        return self._main_menu
 
-		if window == otherWindow:
-			raise ValueError(u'window == otherWindow')
+    def set_main_menu(self, menu):
+        self._main_menu = menu # XXX:
 
-		try:
-			idx = self._windows.index(otherWindow)
-			idx += 1
-		except ValueError:
-			raise ValueError(u'window not a windows')
-		self.insertWindowAtIndex(window, idx)
+    # Window Management - friend calls
+    def _add_window(self, window):
+        self._windows.insert(0, window)
+        self.did_add_window(window)
 
-	def insertWindowBelowWindow(self, window, otherWindow):
-		if otherWindow is None:
-			raise ValueError(u'otherWindow is None')
+    def _remove_window(self, window):
+        self.will_remove_window(window)
+        self._windows.remove(window)
+        if self._key_window is window:
+            self._key_window = None
 
-		if window == otherWindow:
-			raise ValueError(u'window == otherWindow')
+    def _bring_window_to_front(self, window):
+        # called when a user brings a window to the front
+        self._windows.remove(window)
+        self._windows.insert(0, window)
 
-		try:
-			idx = self._windows.index(otherWindow)
-		except ValueError:
-			raise ValueError(u'window not in windows')
-		self.insertWindowAtIndex(window, idx)
+    # Observing Window-Related Changes
+    def did_add_window(self, window):
+        pass        
 
-	def exchangeSubviewAtIndexwithSubviewAtIndex(self, idx1, idx2):
-		if (   idx1 < 0 
-			or idx1 >= len(self._windows) 
-			or idx2 < 0
-			or idx2 >= len(self._windows)):
-			raise ValueError(u'index not in range')
-		item2 = self._windows[idx2]
-		item1 = self._windows.pop(idx1)
-		self._windows.insert(idx1, item2)
-		self._windows.pop(idx2)
-		self._windows.inset(idx2, item1)
+    def will_remove_window(self, window):
+        pass    
 
-	# Updating Windows
-	def updateWindows(self):
-		for window in self._windows:
-			window.update()
+    # Application state handlers
+    def application_will_terminate(self):
+        pass
 
-	# Handling Events
-	def currentEvent(self):
-		retval = None
-		if len(self._dispatch._events) > 0:
-			retval = self._dispatch._events[0]
-		return retval
+    # Responder overrides
+    def next_responder(self):   
+        return None # XXX: should really go to the controller
 
-	def nextEventMatching(self, types=None, dequeue=True, timeout=None):
-		return self._dispatch.nextEventMatching(self, types, dequeue, timout)
 
-	def discardEventsMatchingMask(self, types, lastEvent):
-		self._dispatch.discardEventsMatchingMask(types, lastEvent)
-
-	def postEvent(self, ev, atStart):
-		self._dispatch.postEvent(ev, atStart)
-
-	# Observing Window-Related Changes
-	def didAddWindow(self):
-		pass		
-
-	def willRemoveWindow(self, window):
-		pass	
-
-	# we'll set nextResponder to the keyWindow - so that we deliver all events 
-	# to the right window
-	def nextResponder(self):	
-		return self._keyWindow
-		
-
-class ApplicationEventDispatch(threading.Thread):
-	def __init__(self, application):
-		threading.Thread.__init__(self)
-		# We don't actually want multiple threads, we just want the ability
-		# to exec the event processing on a different stack - to allow nice
-		# symantics when you shortcut the event processing 
-		#
-		# we should really just re-enter the event loop but that requires some
-		# rather in-depth digging around which I don't fancy at the moment
-		self._application = application
-		self._events = []
-		self._dispatchPaused = threading.Event()
-		self._dispatchEvents = threading.Event()
-		self.start()
-
-		# the Responder dispatch routines for each event
-		self._dispatch = {
-			KeyEventType.KEY_DOWN: u'keyDown',
-			KeyEventType.KEY_UP: u'keyUp',
-			KeyEventType.FLAGS_CHANGED: u'flagsChanged',
-			
-			MouseEventType.MOUSE_DOWN: u'mouseDown',
-			MouseEventType.OTHER_MOUSE_DOWN: u'otherMouseDown',
-			MouseEventType.RIGHT_MOUSE_DOWN: u'rightMouseDown',
-			MouseEventType.SCROLL_WHEEL_UP: u'scrollWheel',
-			MouseEventType.SCROLL_WHEEL_DOWN: u'scrollWheel',
-
-			MouseEventType.MOUSE_UP: u'mouseUp',
-			MouseEventType.OTHER_MOUSE_UP: u'otherMouseUp',
-			MouseEventType.RIGHT_MOUSE_UP: u'rightMouseUp',
-
-			MouseEventType.MOUSE_DRAGGED: u'mouseDragged',
-			MouseEventType.OTHER_MOUSE_DRAGGED: u'otherMouseDragged',
-			MouseEventType.RIGHT_MOUSE_DRAGGED: u'rightMouseDragged',
-
-			EnterExitEventType.MOUSE_ENTERED: u'mouseEntered',
-			EnterExitEventType.MOUSE_EXITED: u'mouseExited'
-		}
-
-	def postEvent(self, ev, atStart):
-		# this should only ever be able to be called when the handler thread
-		# is waiting on _dispatchEvents
-		if (   self._dispatchEvents.is_set() == True 
-			or self._dispatchPaused.is_set() == False):
-			raise RuntimeError(u'add called when event handler is running')
-		idx = 0
-		if not atStart:
-			idx = len(self._events)
-		self._events.insert(idx, ev)
-		self._dispatchEvents.set()
-		self._dispatchPaused.wait()
-
-	def _waitForNextEvent(self):
-		self._dispatchPaused.set()
-		self._dispatchEvents.wait()
-
-	def run(self):
-		while True:
-			if len(self._events) == 0:
-				self._waitForNextEvent() # we're out of events
-			# pop the first event off the queue and dispatch it
-			ev = self._events.pop(0)
-			dispatch = self._dispatch[ev.type]
-			getattr(self._application, dispatch)(ev)
-
-	def nextEventMatching(self, types=None, dequeue=True, timeout=None):
-		# this is called by an event dispatcher i.e. on this classes thread
-		# when it wants to shortcut normal event dispatching
-		if threading.current_thread() != self:
-			raise RuntimeError(
-				u'You can only shortcut event dispatch from an event handler'
-			)
-
-		retval = None
-		start = time.time()
-		remaining = timeout
-		while remaining is None or remaining > 0.0:
-			if not self._waitForNextEvent(remaining):
-				break # timeout occurred
-			# we can ONLY get one event at a time - so its always the last 
-			# event we need to examine
-			if types == None:
-				retval = self._events[-1]
-				break
-			else:
-				if self._events[-1].type in types:
-					retval = self._events[-1]
-					break
-			if timeout is not None:
-				remaining = timeout - (time.time() - start)
-		if retval is not None and dequeue:
-			self._events.pop()
-		return retval
-
-	def discardEventsMatchingMask(self, types, lastEvent):
-		if len(self._events) > 0:
-			idx = 0
-			while self._events[idx] != lastEvent:
-				if types is None or self._events[idx].type in types:
-					# throw away event
-					self._events.pop(idx)
-				else:
-					idx += 1
-
+# Applciation termination defines
+Application.TERMINATE_CANCEL = 0
+Application.TERMINATE_LATER  = 1
 

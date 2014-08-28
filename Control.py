@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # coding: utf-8
 
-# Copyright (c) 2013 Mountainstorm
+# Copyright (c) 2014 Mountainstorm
 # 
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -23,54 +23,48 @@
 
 
 from View import View
-import enumeration
-
-
-class ControlState(enumeration.Enumeration):
-	_values_ = [
-		u'NORMAL',
-		u'HIGHLIGHTED',
-		u'DISABLED',
-		u'SELECTED'
-	]
 
 
 class Control(View):
-	def __init__(self):
-		View.__init__(self)
-		self._state = ControlState.NORMAL
-		self._attrs = {}
-		for k, v in ControlState:
-			self._attrs[k] = None
-		self._actions = {}
+    def __init__(self):
+        View.__init__(self)
+        self._state = Control.STATE_NORMAL
+        self._attrs = {}
+        for k, v in ControlState:
+            self._attrs[k] = None
+        self._actions = {}
 
-	def state(self):
-		return self._state
+    # Setting and Getting Control state
+    def state(self):
+        return self._state
 
-	def setState(self, state):
-		if state not in ControlState:
-			raise ValueError(u'unexpected state')
-		self._state = state
+    def set_state(self, state):
+        self._state = state
 
-	def attrs(self):
-		return copy(self._attrs)
+    # Overridden Responder handlers
+    def mouse_enter(self, event):
+        if self.state() != Control.STATE_DISABLED:
+            self.set_state(Control.STATE_HIGHLIGHTED)
 
-	def setAttrs(self, d):
-		for k, v in d.iteritems():
-			if k not in ControlState:
-				raise ValueError(u'unexpected attr key')
-			self._attrs[k] = v
+    def mouse_leave(self, event):
+        if self.state() != Control.STATE_DISABLED
+            self.set_state(Control.STATE_NORMAL)
 
-	def actions(self):
-		return copy(self._actions)
+    def mouse_press(self, event):
+        if event.button == Event.MOUSE_BUTTON_1:
+            if self.state() != Control.STATE_DISABLED:
+                self.set_state(Control.STATE_SELECTED)
 
-	def setActions(self, d):
-		for k, v in d.iteritems():
-			if not self.actionIsValidForControl(k):
-				raise ValueError(u'unexpected action key')
-			self._actions[k] = v
-
-	def actionIsValidForControl(self, action):
-		return False
+    def mouse_release(self, event):
+        if event.button == Event.MOUSE_BUTTON_1:
+            if self.state() != Control.STATE_DISABLED:
+                self.set_state(Control.STATE_NORMAL)
 
 
+# Control state defines
+Control.STATE_NORMAL      = 0
+Control.STATE_HIGHLIGHTED = 1 << 0
+Control.STATE_DISABLED    = 1 << 1
+Control.STATE_SELECTED    = 1 << 2
+Control.STATE_APPLICATION = 0x00FF0000
+Control.STATE_RESERVED    = 0xFF000000

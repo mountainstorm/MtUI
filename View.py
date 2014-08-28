@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # coding: utf-8
 
-# Copyright (c) 2013 Mountainstorm
+# Copyright (c) 2014 Mountainstorm
 # 
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -22,482 +22,482 @@
 # SOFTWARE.
 
 
-from Responder import Responder
-from Rect import *
-from copy import deepcopy
-from Layout import *
+from Responder import *
+from Geometry import *
+from pyglet.gl import *
 
 
-class ViewConstraints(object):
-	def __init__(self):
-		self.left = None
-		self.top = None
-		self.width = None
-		self.height = None
-		self.right = None
-		self.bottom = None
+class InvalidViewError(Exception):
+    pass
 
 
 class View(Responder):
-	# Initializing a View Object
-	def __init__(self):
-		Responder.__init__(self)
-		self._window = None
-		self._superview = None
-		self._needsDisplay = None
-		self._needsLayout = True
-		self._subviews = []
-		self._constraints = [] #set()
-		self._needsUpdateConstraints = True
-		self._tag = None
-
-		self.top = LayoutVariable(self, u'top')
-		self.left = LayoutVariable(self, u'left')
-		self.bottom = LayoutVariable(self, u'bottom')
-		self.right = LayoutVariable(self, u'right')
-		self.width = LayoutVariable(self, u'width')
-		self.height = LayoutVariable(self, u'height')
-
-		self._frame = ViewConstraints()
-		self._frame.right = self.right == self.left + self.width
-		self._frame.bottom = self.bottom == self.top + self.height
-		self.addConstraints([self._frame.right, self._frame.bottom])
-		
-	def __repr__(self):
-		tag = self._tag.__repr__()
-		if tag is None:
-			tag = u'None'
-		return u'<%s object with rect: %s and tag %s>' % (
-			self.__class__.__name__, 
-			self.frame(),
-			tag
-		)
-
-	# frame Rectangles
-	def frame(self):
-		return Rect(
-			x=self.left.intval, 
-			y=self.top.intval,
-			width=self.width.intval,
-			height=self.height.intval
-		)
-
-	def frameConstraints(self):
-		retval = Rect()
-		if self._frame.left is not None:
-			retval.origin.x = self._frame.left.rhs.constant
-		if self._frame.top is not None:
-			retval.origin.y = self._frame.top.rhs.constant
-		if self._frame.width is not None:
-			retval.size.width = self._frame.width.rhs.constant
-		if self._frame.height is not None:
-			retval.size.height = self._frame.height.rhs.constant
-		return retval
-
-	def setFrameConstraints(self, frameRect):
-		# update all the constrains
-		if self._frame.left is not None and self._frame.left in self._constraints:
-			self.removeConstraint(self._frame.left)
-		if frameRect.origin.x is not None:
-			self._frame.left = self.left == frameRect.origin.x
-			self.addConstraint(self._frame.left)
-
-		if self._frame.top is not None and self._frame.top in self._constraints:
-			self.removeConstraint(self._frame.top)
-		if frameRect.origin.y is not None:
-			self._frame.top = self.top == frameRect.origin.y
-			self.addConstraint(self._frame.top)
-
-		if self._frame.width is not None and self._frame.width in self._constraints:
-			self.removeConstraint(self._frame.width)
-		if frameRect.size.width is not None:
-			self._frame.width = self.width == frameRect.size.width
-			self.addConstraint(self._frame.width)
-
-		if self._frame.height is not None and self._frame.height in self._constraints:
-			self.removeConstraint(self._frame.height)
-		if frameRect.size.height is not None:
-			self._frame.height = self.height == frameRect.size.height
-			self.addConstraint(self._frame.height)
-
-	# Managing the View Hierarchy
-	def superview(self):
-		return self._superview
-
-	def subviews(self):
-		return self._subviews.copy()
-
-	def window(self):
-		return self._window
-
-	def addSubview(self, view):
-		self.insertSubviewAtIndex(view, len(self._subviews))
-
-	def bringSubviewToFront(self, view):
-		try:
-			self._subviews.remove(view)
-			self._subviews.append(view)
-		except ValueError:
-			raise ValueError(u'view not a subview')
-
-	def sendSubviewToBack(self, view):
-		try:
-			self._subviews.remove(view)
-			self._subviews.insert(0, view)
-		except ValueError:
-			raise ValueError(u'view not a subview')
-
-	def removeFromSuperview(self):
-		if self._superview is not None:
-			responder = self._window.firstResponder()
-			while responder is not None:
-				if responder == self:
-					self._window.makeFirstResponder(self._window)
-					break
-				responder = responder._superview
-
-			self._superview.willRemoveSubview(self)
-			self._willMoveToWindow(None)
-			self.willMoveToSuperview(None)
-			
-			self._superview._subviews.remove(self)
-			self._superview = None
-			self._window = None
-			if self._superview is not None:
-				self._superview.setNeedsDisplay()
-
-			self._didMoveToWindow()
-			self.didMoveToSuperview()			
-
-	def insertSubviewAtIndex(self, view, idx):
-		if view is None:
-			raise ValueError(u'Adding a None subview')
-
-		if self.isDescendantOf(view):
-			raise ValueError(u'Loop in the view tree')
-
-		if idx < 0 or idx > len(self._subviews):
-			raise ValueError(u'Index must be between 0 and len(subviews)')
-
-		view.removeFromSuperview()
-		view._willMoveToWindow(self._window)
-		view.willMoveToSuperview(self)
-
-		self._subviews.insert(idx, view)
-		view._superview = self
-		view._window = self._window
-		view.setNeedsDisplay()
-
-		view._didMoveToWindow()
-		view.didMoveToSuperview()
-		self.didAddSubview(view)
-
-	def insertSubviewAboveSubview(self, view, otherView):
-		if otherView is None:
-			raise ValueError(u'otherView is None')
-
-		if view == otherView:
-			raise ValueError(u'view == otherView')
-
-		try:
-			idx = self._subviews.index(otherView)
-			idx += 1
-		except ValueError:
-			raise ValueError(u'view not a subview')
-		self.insertSubviewAtIndex(view, idx)
-
-	def insertSubviewBelowSubview(self, view, otherView):
-		if otherView is None:
-			raise ValueError(u'otherView is None')
-
-		if view == otherView:
-			raise ValueError(u'view == otherView')
-
-		try:
-			idx = self._subviews.index(otherView)
-		except ValueError:
-			raise ValueError(u'view not a subview')
-		self.insertSubviewAtIndex(view, idx)
-
-	def exchangeSubviewAtIndexwithSubviewAtIndex(self, idx1, idx2):
-		if (   idx1 < 0 
-			or idx1 >= len(self._subviews) 
-			or idx2 < 0
-			or idx2 >= len(self._subviews)):
-			raise ValueError(u'index not in range')
-		item2 = self._subviews[idx2]
-		item1 = self._subviews.pop(idx1)
-		self._subviews.insert(idx1, item2)
-		self._subviews.pop(idx2)
-		self._subviews.inset(idx2, item1)
-
-	def isDescendantOf(self, view):
-		if self == view:
-			return True
-		if self._superview is None:
-			return False
-		if self._superview == view._superview:
-			return True
-		return self._superview.isDescendantOf(view)
-
-	# Configuring the Resizing Behavior
-	def sizeThatFits(self, size):
-		return self.frame().size
-
-	def sizeToFit(self):
-		rect = self.frame()
-		rect.size = sizeThatFits(None)
-		self.setFrameConstraints(rect)
-
-	# Laying out Subviews
-	def layoutSubviews(self):
-		self.setNeedsUpdateConstraints()
-		for view in self._subviews:
-			view._layoutSubviews()
-
-	def setNeedsLayout(self):
-		self._needsLayout = True
-		for view in self._subviews:
-			view.setNeedsLayout()
-
-	def layoutIfNeeded(self):
-		if self._needsLayout:
-			top = self
-			while top._superview is not None and top._superview._needsLayout:
-				top = top._superview
-			top._layoutSubviews()
-			top.updateConstraintsIfNeeded()
-			layout_update(top._gatherConstraints())
-
-	# Managing Constraints
-	def addConstraint(self, constraint):
-		# We're going to test that all variables in this constraint are 
-		# from desendent views of this one
-		for var in layout_variables(constraint):
-			if not var.view.isDescendantOf(self):
-				raise ValueError(
-					  u'LayoutVariable\'s view is not a descedant: ' 
-					+ var.view.__str__()
-					+ u' '
-					+ self.__str__()
-				)
-		self._constraints.append(constraint)
-
-	def addConstraints(self, constraints):
-		for constraint in constraints:
-			self.addConstraint(constraint)
-
-	def removeConstraint(self, constraint):
-		self._constraints.remove(constraint)
-
-	def removeConstraints(self, constraints):
-		for constraint in set(constraints):
-			self.removeConstraint(constraint)
-
-	# Triggering Constraint-Based Layout
-	def updateConstraints(self):
-		pass
-
-	def setNeedsUpdateConstraints(self):
-		self._needsUpdateConstraints = True
-
-	def updateConstraintsIfNeeded(self):
-		if self._needsUpdateConstraints:
-			self.updateConstraints()
-			# clear everything below us
-			self._needsUpdateConstraints = False
-		for view in self._subviews:
-			view.updateConstraintsIfNeeded()
-
-	# Drawing and Updating the View
-	def drawRect(self, rect):
-		pass
-
-	def setNeedsDisplay(self):
-		self._needsDisplay = True
-		for view in self._subviews:
-			view.setNeedsDisplay()		
-
-	def setNeedsDisplayInRect(self, rect):
-		if self._needsDisplay is None:
-			self._needsDisplay = []
-		if isinstance(self._needsDisplay, list):
-			self._needsDisplay.append(rect)
-
-	def displayIfNeeded(self):
-		if self._needsDisplay is not None:
-			if isinstance(self._needsDisplay, list):
-				for rect in self._needsDisplay:
-					self.drawRect(rect)
-			else:
-				self.drawRect(self._frame)
-			self._needsDisplay = None
-		for view in self._subviews:
-			view.displayIfNeeded()
-
-	# Identifying the View at Runtime
-	def tag(self):
-		return self._tag
-
-	def setTag(self, tag):
-		self._tag = tag
-
-	def viewWithTag(self, tag):
-		retval = None
-		if self._tag is not None and self._tag == tag:
-			retval = self
-		else:
-			for view in self._subviews:
-				retval = view.viewWithTag(tag)
-				if retval is not None:
-					break
-		return retval
-
-	# Converting Between View Coordinate Systems
-	def convertPointToView(self, point, view=None):
-		retval = self._convertPointToWindow(point)
-		if view is not None:
-			retval = view._convertPointFromWindow(retval)
-		return retval
-
-	def convertPointFromView(self, point, view=None):
-		retval = copy(point)
-		if view is not None:
-			retval = view._convertPointToWindow(point)
-		retval = self._convertPointFromWindow(retval)
-		return retval
-
-	def _convertPointFromWindow(self, point):
-		new = copy(point)
-		cur = self
-		while cur is not self._window:
-			new.x -= cur.left.intval
-			new.y -= cur.top.intval
-			cur = cur._superview
-		return new
-
-	def _convertPointToWindow(self, point):
-		new = copy(point)
-		cur = self
-		while cur is not self._window:
-			new.x += cur.left.intval
-			new.y += cur.top.intval
-			cur = cur._superview
-		return new
-
-	# Hit Testing in a View
-	def pointInsideWithEvent(self, point, event):
-		retval = False
-		if (    point.x >= self.left.intval 
-			and point.x < (self.left.intval + self.width.intval)
-			and point.y >= self.top.intval 
-			and point.y < (self.top.intval + self.height.intval)):
-			retval = True
-		return retval
-
-	def hitTestWithEvent(self, point, event):
-		retval = self
-		# reverse the subviews so the last one (the top one) is tested first
-		for view in self._subviews[::-1]:
-			if view.pointInsideWithEvent(point, event):
-				retval = view
-				p = self.convertPointToView(point, view)
-				v = view.hitTestWithEvent(p, event)
-				if v is not None:
-					retval = v
-				break
-		return retval
-
-	# TODO methods
-	# clipsToBounds
-	# convertRect:toView:
-	# convertRect:fromView:
-
-	# Observing View-Related Changes
-	def didAddSubview(self, subview):
-		pass
-
-	def willRemoveSubview(self, subview):
-		pass
-
-	def willMoveToSuperview(self, superview):
-		pass
-
-	def didMoveToSuperview(self):
-		pass
-
-	def willMoveToWindow(self, window):
-		pass
-
-	def didMoveToWindow(self):
-		pass
-
-	# Responder methods
-	def nextResponder(self):
-		# TODO: return controller, if present
-		return self._superview
-
-	def isFirstResponder(self):
-		if self._window is None:
-			raise ValueError(
-				u'View is not part of a view hierarchy: ' + self.__repr__()
-			)
-		return self._window.firstResponder() == self
-		
-	def canBecomeFirstResponder(self):
-		return False
-
-	def becomeFirstResponder(self):
-		retval = False
-		if self._window is None:
-			raise ValueError(
-				u'View is not part of a view hierarchy: ' + self.__repr__()
-			)
-		fr = self._window.firstResponder()
-		if self.canBecomeFirstResponder():
-			if fr is None or fr.resignFirstResponder():
-				self._window._firstResponder = self
-				retval = True
-		return retval
-
-	def canResignFirstResponder(self):
-		return True
-
-	def resignFirstResponder(self):
-		if self._window is None:
-			raise ValueError(
-				u'View is not part of a view hierarchy: ' + self.__repr__()
-			)
-		fr = self._window.firstResponder()
-		if fr != self:
-			raise ValueError(
-				u'Unable to resign first responder, as object is not first responder: ' + self.__repr__()
-			)
-		retval = self.canResignFirstResponder()
-		if reval:
-			self._window._firstResponder = None
-			retval = True
-		return retval
-
-	# handle propogaton of changing window
-	def _willMoveToWindow(self, window):
-		self.willMoveToWindow(window)
-		self._window = window
-		for view in self._subviews:
-			view._willMoveToWindow(window)
-
-	def _didMoveToWindow(self):
-		self.didMoveToWindow()
-		for view in self._subviews:
-			view._didMoveToWindow()
-
-	def _layoutSubviews(self):
-		self.layoutSubviews()
-		self._needsLayout = False
-
-	def _gatherConstraints(self):
-		retval = copy(self._constraints)
-		for view in self._subviews:
-			retval += view._gatherConstraints()
-		return retval
+    # Autoresize defines
+    AUTORESIZING_NONE                   = 0
+    AUTORESIZING_FLEXIBLE_LEFT_MARGIN   = 1 << 0
+    AUTORESIZING_FLEXIBLE_WIDTH         = 1 << 1
+    AUTORESIZING_FLEXIBLE_RIGHT_MARGIN  = 1 << 2
+    AUTORESIZING_FLEXIBLE_TOP_MARGIN    = 1 << 3
+    AUTORESIZING_FLEXIBLE_HEIGHT        = 1 << 4
+    AUTORESIZING_FLEXIBLE_BOTTOM_MARGIN = 1 << 5
+
+    def __init__(self):
+        self._background_color = None
+        self._clips_to_bounds = True
+        self._frame = Rect(100, 100, 100, 100)
+        self._superview = None
+        self._subviews = []
+        self._window = None
+        self._autoresizing_mask = View.AUTORESIZING_NONE
+        self._autoresizes_subviews = True
+        self._needs_layout = True
+        self._needs_display = True
+        self._invalid_rectangles = []
+        self._tag = None
+
+    # Configuring a views visual appearance
+    def background_color(self):
+        return self._background_color
+
+    def set_background_color(self, color):
+        self._background_color = color
+
+    def clips_to_bounds(self):
+        return self._clips_to_bounds
+
+    def set_clips_to_bounds(self, clip):
+        self._clips_to_bounds = clip
+
+    # Configuring frame
+    def frame(self):
+        return self._frame
+
+    def set_frame(self, rect):
+        if not isinstance(rect, Rect):
+            raise TypeError(u'rect must be a Rect')
+        # update any non None members
+        old_size = copy(self.frame().size)
+
+        if rect.origin.x is not None:
+            self._frame.origin.x = rect.origin.x
+        if rect.origin.y is not None:
+            self._frame.origin.y = rect.origin.y
+        if rect.size.width is not None:
+            self._frame.size.width = rect.size.width
+            self.set_needs_layout()
+        if rect.size.height is not None:
+            self._frame.size.height = rect.size.height
+            self.set_needs_layout()
+
+        for view in self._subviews:
+            view.resize_with_old_superview_size(old_size)
+            view.set_needs_layout()
+
+    # Managing the view hierarchy
+    def superview(self):
+        return self._superview
+
+    def subviews(self):
+        return copy(self._subviews)
+
+    def window(self):
+        return self._window
+
+    def add_subview(self, view):
+        self.insert_subview_at_index(view, 0)
+
+    def bring_subview_to_front(self, view):
+        if not isinstance(view, View):
+            raise TypeError(u'view must be a View or subclass of it')
+        try:
+            self._subviews.remove(view)
+            self._subviews.insert(0, view)
+        except ValueError:
+            raise InvalidViewError(u'view is not a subview of this instance')
+
+    def send_subview_to_back(self, view):
+        if not isinstance(view, View):
+            raise TypeError(u'view must be a View or subclass of it')
+        try:
+            self._subviews.remove(view)
+            self._subviews.append(view)
+        except:
+            raise InvalidViewError(u'view is not a subview of this instance')
+
+    def remove_from_superview(self):
+        if self._superview is not None:
+            # XXX: sort out first responder if were it?
+            self._superview.will_remove_subview(self)
+            self._will_move_to_window(None)
+            self.will_move_to_superview(None)
+            
+            self._superview._subviews.remove(self)
+            self._superview = None
+
+            self._did_move_to_window()
+            self.did_move_to_superview()
+            self.set_needs_layout()
+
+    def insert_subview_at_index(self, view, idx):
+        if not isinstance(view, View):
+            raise TypeError(u'view must be a View or subclass of it')
+        if self.is_descendant_of(view):
+            raise TypeError(u'this view is a descendant of view - adding would create a loop')
+        if idx < 0 or idx > len(self._subviews):
+            raise ValueError(u'Index must be between 0 and len(subviews)')
+
+        view.remove_from_superview()
+        if self._window is not None:
+            view._will_move_to_window(self._window)
+        view.will_move_to_superview(self)
+
+        self._subviews.insert(idx, view)
+        view._superview = self
+        
+        if self._window is not None:
+            view._did_move_to_window()
+        view.did_move_to_superview()
+        self.did_add_subview(view)
+        self.set_needs_layout()
+
+    def insert_subview_above_subview(self, view, other_view):
+        if not isinstance(view, View):
+            raise TypeError(u'view must be a View or subclass of it')
+        if not isinstance(other_view, View):
+            raise TypeError(u'other_view must be a View or subclass of it')
+        try:
+            idx = self._subviews.index(other_view)
+            self.insert_subview_at_index(view, idx)
+        except ValueError:
+            raise InvalidViewError(u'other_view is not a subview of this instance')
+
+    def insert_subview_below_subview(self, view, other_view):
+        if not isinstance(view, View):
+            raise TypeError(u'view must be a View or subclass of it')
+        if not isinstance(other_view, View):
+            raise TypeError(u'other_view must be a View or subclass of it')
+        try:
+            idx = self._subviews.index(other_view)
+            self.insert_subview_at_index(view, idx + 1)
+        except ValueError:
+            raise InvalidViewError(u'other_view is not a subview of this instance')
+
+    def exchange_subview_at_index_with_subview_at_index(self, idx1, idx2):
+        if (   idx1 < 0 
+            or idx1 >= len(self._subviews)):
+            raise ValueError(u'idx1 not in range')
+        if (   idx2 < 0
+            or idx2 >= len(self._subviews)):
+            raise ValueError(u'idx2 not in range')
+        item2 = self._subviews[idx2]
+        item1 = self._subviews[idx1]
+        self._subviews[idx1] = item2
+        self._subviews[idx2] = item1
+
+    def is_descendant_of(self, view):
+        if not isinstance(view, View):
+            raise TypeError(u'view must be a View or subclass of it')
+        retval = False
+        if view is not None:
+            v = self
+            while v is not None and v != view:
+                v = v._superview
+            retval = v == view
+        return retval
+
+    # Configuring the Resizing Behavior
+    def autoresizing_mask(self):
+        return self._autoresizing_mask
+
+    def set_autoresizing_mask(self, mask):
+        self._autoresizing_mask = mask
+
+    def autoresizes_subviews(self):
+        return self._autoresizes_subviews
+
+    def set_autoresizes_subviews(self, resize):
+        self._autoresizes_subviews = bool(resize)
+
+    def size_that_fits(self, size):
+        return self.frame().size
+
+    def size_to_fit(self):
+        rect = self.frame()
+        rect.size = self.size_that_fits(self.frame().size)
+        self.set_frame(rect)
+
+    def resize_with_old_superview_size(self, old_size):
+        frame = self.frame()
+        tr = Point(frame.origin.x + frame.size.width, frame.origin.y + frame.size.height)
+        bl = copy(frame.origin)
+        new_size = self._superview.frame().size
+
+        # the amounts to distributs amoungst the flexible borders
+        flexx = 0
+        flexy = 0
+        
+        if self._autoresizing_mask & View.AUTORESIZING_FLEXIBLE_LEFT_MARGIN:
+            flexx += 1
+        if self._autoresizing_mask & View.AUTORESIZING_FLEXIBLE_WIDTH:
+            flexx += 1
+        if self._autoresizing_mask & View.AUTORESIZING_FLEXIBLE_RIGHT_MARGIN:
+            flexx += 1
+
+        if self._autoresizing_mask & View.AUTORESIZING_FLEXIBLE_TOP_MARGIN:
+            flexy += 1
+        if self._autoresizing_mask & View.AUTORESIZING_FLEXIBLE_HEIGHT:
+            flexy += 1
+        if self._autoresizing_mask & View.AUTORESIZING_FLEXIBLE_BOTTOM_MARGIN:
+            flexy += 1
+
+        # we now know how many bits we need to divide up the extra space over
+        hd = 0
+        vd = 0
+        if flexx != 0:
+            hd = (new_size.width - old_size.width) / flexx
+        if flexy != 0:
+            vd = (new_size.height - old_size.height) / flexy
+
+        if self._autoresizing_mask & View.AUTORESIZING_FLEXIBLE_LEFT_MARGIN:
+            bl.x += hd
+        if self._autoresizing_mask & View.AUTORESIZING_FLEXIBLE_WIDTH:
+            tr.x += hd
+        if self._autoresizing_mask & View.AUTORESIZING_FLEXIBLE_RIGHT_MARGIN:
+            pass
+
+        if self._autoresizing_mask & View.AUTORESIZING_FLEXIBLE_TOP_MARGIN:
+            pass
+        if self._autoresizing_mask & View.AUTORESIZING_FLEXIBLE_HEIGHT:
+            tr.y += vd
+        if self._autoresizing_mask & View.AUTORESIZING_FLEXIBLE_BOTTOM_MARGIN:
+            bl.y += vd
+
+        self.set_frame(Rect(origin=bl, size=Size(tr.x-bl.x, tr.y-bl.y)))
+
+    # Laying out Subviews
+    def layout_subviews(self):
+        pass
+
+    def set_needs_layout(self):
+        self._needs_layout = True
+
+    def layout_if_needed(self):
+        if self._needs_layout == True:
+            self.layout_subviews()
+            self._needs_layout = False
+        for view in self._subviews:
+            view.layout_if_needed()
+
+    # Drawing and Updating the View
+    def draw_rect(self, rect):
+        if self._background_color is not None:
+            frame = self.frame()
+            color = self._background_color
+            glColor4f(color.red, color.green, color.blue, color.alpha)
+            glRectf(0, 0, frame.size.width, frame.size.height);
+        
+    def set_needs_display(self):
+        self._needs_display = True
+        for view in self._subviews:
+            view.set_needs_display()
+
+    def set_needs_display_in_rect(self, rect):
+        self._invalid_rectangles.append(rect)
+        # XXX: should this do something to iss subview in this rect?
+
+    def display_if_needed(self):
+        if self._needs_display == True:
+            self._draw_rect(self._frame)
+        else:
+            for rect in self._invalid_rectangles:
+                self._draw_rect(rect)
+        self._invalid_rectangles = []
+        self._needs_display = False
+        for view in self._subviews:
+            view.display_if_needed()
+
+    # Identifying the View at Runtime
+    def tag(self):
+        return self._tag
+
+    def set_tag(self, tag):
+        self._tag = tag
+
+    def view_with_tag(self, tag):
+        if tag is None:
+            raise ValueError(u'None is not a valid tag value')
+        retval = None
+        if self._tag == tag:
+            retval = self
+        else:
+            for view in self._subviews:
+                retval = view.view_with_tag(tag)
+                if retval is not None:
+                    break
+        return retval           
+
+    # Converting Between View Coordinate Systems
+    def convert_point_to_view(self, point, view=None):
+        if view is not None:
+            if not isinstance(view, View):
+                raise TypeError(u'view must be a View or subclass of it')
+            if self._window is None:
+                raise InvalidViewError(u'reciever must be in a window')
+            if view._window is None:
+                raise InvalidViewError(u'view must be in a window')
+            if self._window != view._window:
+                raise InvalidViewError(u'view must be in same window as reciever')
+        retval = copy(point)
+        if view is not self:
+            # convert point to window
+            cur = self
+            while cur is not self._window:
+                frame = cur.frame()
+                retval.x += frame.origin.x
+                retval.y += frame.origin.y
+                cur = cur._superview
+            if view is not None:
+                retval = view.convert_point_from_view(retval)
+        return retval
+
+    def convert_point_from_view(self, point, view=None):
+        if view is not None:
+            if not isinstance(view, View):
+                raise TypeError(u'view must be a View or subclass of it')
+            if self._window is None:
+                raise InvalidViewError(u'reciever must be in a window')
+            if view._window is None:
+                raise InvalidViewError(u'view must be in a window')
+            if self._window != view._window:
+                raise InvalidViewError(u'view must be in same window as reciever')      
+        retval = copy(point)
+        if view is not self:
+            if view is not None:
+                retval = view.convert_point_to_view(point)
+            # convert point to window
+            cur = self
+            while cur is not self._window:
+                frame = cur.frame()
+                retval.x -= frame.origin.x
+                retval.y -= frame.origin.y
+                cur = cur._superview
+        return retval
+
+    def convert_rect_to_view(self, rect, view=None):
+        topleft = self.convert_point_to_view(rect.origin, view)
+        br = Point(rect.origin.x + rect.size.width, rect.origin.y + rect.size.height)
+        br = self.convert_point_to_view(br, view)
+        return Rect(origin=topleft, width=br.x-rect.origin.x, height=br.y-rect.origin.y)
+
+    def convert_rect_from_view(self, rect, view=None):
+        topleft = self.convert_point_from_view(rect.origin, view)
+        br = Point(rect.origin.x + rect.size.width, rect.origin.y + rect.size.height)
+        br = self.convert_point_from_view(br, view)
+        return Rect(origin=topleft, width=br.x-rect.origin.x, height=br.y-rect.origin.y)
+
+    # Hit Testing in a View - in our coordinate system
+    def point_inside_with_event(self, point, event=None):
+        retval = False
+        frame = copy(self.frame())
+        # XXX: why does this need to be > 0 and <= size rather than >= 0 and < size?
+        if (    point.x > 0 
+            and point.x <= frame.size.width
+            and point.y > 0 
+            and point.y <= frame.size.height):
+            retval = True
+        return retval
+
+    def hit_test_with_event(self, point, event=None):
+        retval = None
+        if self.point_inside_with_event(point, event):
+            # if its inside us - check all our children
+            for view in self._subviews:
+                p = self.convert_point_to_view(point, view)
+                v = view.hit_test_with_event(p, event)
+                if v is not None:
+                    retval = v
+                    break
+            if retval is None:
+                retval = self
+        return retval
+
+    # Observing view changes
+    def did_add_subview(self, view):
+        pass
+
+    def will_remove_subview(self, view):
+        pass
+
+    def will_move_to_superview(self, superview):
+        pass
+
+    def did_move_to_superview(self):
+        pass
+
+    def will_move_to_window(self, window):
+        pass
+
+    def did_move_to_window(self):
+        pass
+
+    # Responder overrides
+    def next_responder(self):
+        return self._superview
+
+    #
+    # Protected; propogation helpers
+    #
+    def _will_move_to_window(self, window):
+        self.will_move_to_window(window)
+        for view in self._subviews:
+            view._will_move_to_window(window)
+        self._window = window
+
+    def _did_move_to_window(self):
+        self.did_move_to_window()
+        for view in self._subviews:
+            view._did_move_to_window()
+
+    def _draw_rect(self, rect):
+        skip = False
+        frame = self.frame()
+        origin = Point(0, 0)
+        extreme = Point(frame.size.width, frame.size.height)
+        if self._window is not self:
+            origin = self.convert_point_to_view(origin)
+            extreme.x += origin.x
+            extreme.y += origin.y
+        glPushMatrix()
+        glTranslatef(origin.x, origin.y, 0) # set transform for view
+        if self._clips_to_bounds == True:
+            glEnable(GL_SCISSOR_TEST)
+            cur = self._superview
+            while cur is not None and cur is not self._window:
+                if cur.clips_to_bounds() == True:
+                    f = cur.frame()
+                    o = cur.convert_point_to_view(Point(0, 0))
+                    e = cur.convert_point_to_view(Point(f.size.width, f.size.height))
+                    if o.x > origin.x:
+                        origin.x = o.x
+                    if o.y > origin.y:
+                        origin.y = o.y
+                    if e.x < extreme.x:
+                        extreme.x = e.x
+                    if e.y < extreme.y:
+                        extreme.y = e.y
+                cur = cur._superview
+            if extreme.x < origin.x or extreme.y < origin.y:
+                skip = True
+            else:
+                glScissor(
+                    int(origin.x), 
+                    int(origin.y), 
+                    int(extreme.x-origin.x), 
+                    int(extreme.y-origin.y)
+                )
+        if skip == False:
+            self.draw_rect(rect)
+        if self._clips_to_bounds == True:
+            glDisable(GL_SCISSOR_TEST)
+        glPopMatrix()
 

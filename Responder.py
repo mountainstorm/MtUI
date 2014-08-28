@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # coding: utf-8
 
-# Copyright (c) 2013 Mountainstorm
+# Copyright (c) 2014 Mountainstorm
 # 
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -23,84 +23,96 @@
 
 
 class Responder(object):
-	# Managing the Responder Chain
-	def nextResponder(self):
-		return None
+    def __init__(self):
+        self._first_responder = False
 
-	# Responding to Mouse Events
-	def mouseDown(self, event):
-		if self.nextResponder() is not None:
-			self.nextResponder().mouseDown(event)
+    # Managing the Responder Chain
+    def next_responder(self):
+        return None
 
-	def mouseDragged(self, event):
-		if self.nextResponder() is not None:
-			self.nextResponder().mouseDragged(event)
+    def is_first_responder(self):
+        return self._first_responder
 
-	def mouseUp(self, event):
-		if self.nextResponder() is not None:
-			self.nextResponder().mouseUp(event)
+    def can_become_first_responder(self):
+        return False
 
-	def mouseMoved(self, event):
-		if self.nextResponder() is not None:
-			self.nextResponder().mouseMoved(event)
+    def become_first_responder(self):
+        self._first_responder = True
 
-	def mouseEntered(self, event):
-		if self.nextResponder() is not None:
-			self.nextResponder().mouseEntered(event)
+    def can_resign_first_responder(self):
+        return True
 
-	def mouseExited(self, event):
-		if self.nextResponder() is not None:
-			self.nextResponder().mouseExited(event)
+    def resign_first_responder(self):
+        self._first_responder = False
 
-	def rightMouseDown(self, event):
-		if self.nextResponder() is not None:
-			self.nextResponder().rightMouseDown(event)
+    # Events
+    def key_press(self, event):
+        responder = self.next_responder()
+        if responder is not None:
+            responder.key_press(event)
 
-	def rightMouseDragged(self, event):
-		if self.nextResponder() is not None:
-			self.nextResponder().rightMouseDragged(event)
+    def key_release(self, event):
+        responder = self.next_responder()
+        if responder is not None:
+            responder.key_release(event)
 
-	def rightMouseUp(self, event):
-		if self.nextResponder() is not None:
-			self.nextResponder().rightMouseUp(event)
+    def mouse_drag(self, event):
+        responder = self.next_responder()
+        if responder is not None:
+            responder.mouse_drag(event)
 
-	def otherMouseDown(self, event):
-		if self.nextResponder() is not None:
-			self.nextResponder().otherMouseDown(event)
+    def mouse_enter(self, event):
+        responder = self.next_responder()
+        if responder is not None:
+            responder.mouse_enter(event)
 
-	def otherMouseDragged(self, event):
-		if self.nextResponder() is not None:
-			self.nextResponder().otherMouseDragged(event)
+    def mouse_leave(self, event):
+        responder = self.next_responder()
+        if responder is not None:
+            responder.mouse_leave(event)
 
-	def otherMouseUp(self, event):
-		if self.nextResponder() is not None:
-			self.nextResponder().otherMouseUp(event)
+    def mouse_motion(self, event):
+        responder = self.next_responder()
+        if responder is not None:
+            responder.mouse_motion(event)
 
-	# Responding to Key Events
-	def keyDown(self, event):
-		if self.nextResponder() is not None:
-			self.nextResponder().keyDown(event)
+    def mouse_press(self, event):
+        responder = self.next_responder()
+        if responder is not None:
+            responder.mouse_press(event)
 
-	def keyUp(self, event):
-		if self.nextResponder() is not None:
-			self.nextResponder().keyUp(event)
+    def mouse_release(self, event):
+        responder = self.next_responder()
+        if responder is not None:
+            responder.mouse_release(event)
 
-	# Responding to Other Kinds of Events
-	def flagsChanged(self, event):
-		if self.nextResponder() is not None:
-			self.nextResponder().flagsChanged(event)
+    def mouse_scroll(self, event):
+        responder = self.next_responder()
+        if responder is not None:
+            responder.mouse_scroll(event)
 
-	def scrollWheel(self, event):
-		if self.nextResponder() is not None:
-			self.nextResponder().scrollWheel(event)
+    # def mouse_enter_window(self, event):
+    #     responder = self.next_responder()
+    #     if responder is not None:
+    #         responder.mouse_enter_window(event)     
 
-	# TODO: do we want a customEvent handler?
+    # def mouse_leave_window(self, event):
+    #     responder = self.next_responder()
+    #     if responder is not None:
+    #         responder.mouse_leave_window(event)
 
-	# Validating Commands
-	def canPerformAction(action, sender):
-		retval = True
-		if action not in self.__dict__:
-			retval = False
-			if self.nextResponder() is not None:
-				retval = self.nextResponder().canPerformAction(action, sender)
-		return retval
+    def text(self, event):
+        responder = self.next_responder()
+        if responder is not None:
+            responder.text(event)
+
+    def text_motion(self, event):
+        responder = self.next_responder()
+        if responder is not None:
+            responder.text_motion(event)
+
+    def text_motion_select(self, event):
+        responder = self.next_responder()
+        if responder is not None:
+            responder.text_motion_select(event)
+

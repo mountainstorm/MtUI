@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # coding: utf-8
 
-# Copyright (c) 2013 Mountainstorm
+# Copyright (c) 2014 Mountainstorm
 # 
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -22,75 +22,161 @@
 # SOFTWARE.
 
 
-import enumeration
+import time
+from copy import copy
 
 
 class Event(object):
-	def __init__(self, eventType, modifiers, timestamp, context):
-		self.type = eventType
-		self.modifiers = modifiers
-		self.timestamp = timestamp
-		self.context = context
+    def __init__(self, timestamp=None):
+        if timestamp is None:
+            timestamp = time.time()
+        self.timestamp = timestamp
 
-
-class KeyEventType(enumeration.Enumeration):
-	_values_ = [
-		(u'KEY_DOWN', 0x10000000),
-		u'KEY_UP',
-		u'FLAGS_CHANGED'
-	]
+    def dispatch_event(self, responder):
+        raise TypeError(u'Unable to dispatch base event type')
 
 
 class KeyEvent(Event):
-	def __init__(self, eventType, modifiers, timestamp, context, 
-		characters, unmodCharacters, repeat):
-		if eventType not in KeyEventType:
-			raise ValueError(u'unexpected key event type')
-		Event.__init__(self, eventType, modifiers, timestamp, context)
-		self.characters = characters
-		self.charactersIgnoringModifiers = unmodCharacters
-		self.isARepeat = repeat
-
-
-class MouseEventType(enumeration.Enumeration):
-	_values_ = [
-		(u'MOUSE_DOWN', 0x20000000),
-		u'MOUSE_UP',
-		u'RIGHT_MOUSE_DOWN',
-		u'RIGHT_MOUSE_UP',
-		u'MOUSE_DRAGGED',
-		u'RIGHT_MOUSE_DRAGGED',
-		u'OTHER_MOUSE_DOWN',
-		u'OTHER_MOUSE_UP',
-		u'OTHER_MOUSE_DRAGGED',
-		u'SCROLL_WHEEL_UP',
-		u'SCROLL_WHEEL_DOWN',
-		u'MOUSE_MOVED'
-	]
+    pass # helper to make it easy to check where to send it
 
 
 class MouseEvent(Event):
-	def __init__(self, eventType, modifiers, timestamp, context, 
-		location, clickCount, preassure):
-		if eventType not in MouseEventType:
-			raise ValueError(u'unexpected mouse event type')
-		Event.__init__(self, eventType, modifiers, timestamp, context)
-		self.locationInContext = location
-		self.clickCount = clickCount
-		self.preassure = preassure
+    def __init__(self, view=None, timestamp=None):
+        Event.__init__(self, timestamp)
+        self.view = view
 
 
-class EnterExitEventType(enumeration.Enumeration):
-	_values_ = [
-		(u'MOUSE_ENTERED', 0x40000000),
-		u'MOUSE_EXITED'
-	]
+class KeyPressEvent(KeyEvent):
+    def __init__(self, symbol, modifiers, timestamp=None):
+        KeyEvent.__init__(self, timestamp)
+        self.symbol = symbol
+        self.modifiers = modifiers
+
+    def dispatch_event(self, responder):
+        responder.key_press(self)
 
 
-class EnterExitEvent(Event):
-	def __init__(self, eventType, modifiers, timestamp, context):
-		if eventType not in EnterExitEventType:
-			raise ValueError(u'unexpected enter/exit event type')
-		Event.__init__(self, eventType, modifiers, timestamp, context)
+class KeyReleaseEvent(KeyEvent):
+    def __init__(self, symbol, modifiers, timestamp=None):
+        KeyEvent.__init__(self, timestamp)
+        self.symbol = symbol
+        self.modifiers = modifiers
 
+    def dispatch_event(self, responder):
+        responder.key_release(self)
+
+
+class TextEvent(KeyEvent):
+    def __init__(self, text, timestamp=None):
+        KeyEvent.__init__(self, timestamp)
+        self.text = text
+
+    def dispatch_event(self, responder):
+        responder.text(self)
+
+
+class TextMotionEvent(KeyEvent):
+    def __init__(self, motion, timestamp=None):
+        KeyEvent.__init__(self, timestamp)
+        self.motion = motion
+
+    def dispatch_event(self, responder):
+        responder.text_motion(self)
+
+
+class TextMotionSelectEvent(KeyEvent):
+    def __init__(self, motion, timestamp=None):
+        KeyEvent.__init__(self, timestamp)
+        self.motion = motion
+
+    def dispatch_event(self, responder):
+        responder.text_motion_select(self)
+
+
+class MouseDragEvent(MouseEvent):
+    def __init__(self, origin, delta, buttons, modifiers, view, timestamp=None):
+        MouseEvent.__init__(self, view, timestamp)
+        self.origin = copy(origin)
+        self.delta = copy(delta)
+        self.buttons = buttons
+        self.modifiers = modifiers
+
+    def dispatch_event(self, responder):
+        responder.mouse_drag(self)
+
+
+class MouseEnterEvent(MouseEvent):
+    def __init__(self, view, timestamp=None):
+        MouseEvent.__init__(self, view, timestamp)
+
+    def dispatch_event(self, responder):
+        responder.mouse_enter(self)
+
+
+class MouseLeaveEvent(MouseEvent):
+    def __init__(self, view, timestamp=None):
+        MouseEvent.__init__(self, view, timestamp)
+
+    def dispatch_event(self, responder):
+        responder.mouse_leave(self)
+
+
+class MouseMotionEvent(MouseEvent):
+    def __init__(self, origin, delta, view, timestamp=None):
+        MouseEvent.__init__(self, view, timestamp)
+        self.origin = copy(origin)
+        self.delta = copy(delta)
+
+    def dispatch_event(self, responder):
+        responder.mouse_motion(self)
+
+
+class MousePressEvent(MouseEvent):
+    def __init__(self, origin, buttons, modifiers, view, timestamp=None):
+        MouseEvent.__init__(self, view, timestamp)
+        self.origin = copy(origin)
+        self.buttons = buttons
+        self.modifiers = modifiers
+
+    def dispatch_event(self, responder):
+        responder.mouse_press(self)
+
+
+class MouseReleaseEvent(MouseEvent):
+    def __init__(self, origin, buttons, modifiers, view, timestamp=None):
+        MouseEvent.__init__(self, view, timestamp)
+        self.origin = copy(origin)
+        self.buttons = buttons
+        self.modifiers = modifiers
+
+    def dispatch_event(self, responder):
+        responder.mouse_release(self)
+
+
+class MouseScrollEvent(MouseEvent):
+    def __init__(self, origin, delta, view, timestamp=None):
+        MouseEvent.__init__(self, view, timestamp)
+        self.origin = copy(origin)
+        self.delta = copy(delta)
+
+    def dispatch_event(self, responder):
+        responder.mouse_scroll(self)
+
+
+# class MouseEnterWindowEvent(MouseEvent):
+#     def __init__(self, origin, view, timestamp=None):
+#         MouseEvent.__init__(self, view, timestamp)
+#         self.origin = copy(origin)
+
+#     def dispatch_event(self, responder):
+#         responder.mouse_enter_window(self)
+
+
+# class MouseLeaveWindowEvent(MouseEvent):
+#     def __init__(self, origin, view, timestamp=None):
+#         MouseEvent.__init__(self, view, timestamp)
+#         self.origin = copy(origin)
+
+#     def dispatch_event(self, responder):
+#         responder.mouse_leave_window(self)
 
